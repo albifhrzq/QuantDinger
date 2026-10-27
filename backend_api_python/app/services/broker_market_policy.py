@@ -36,6 +36,10 @@ def _build_broker_markets() -> Dict[str, Dict[str, Set[str]]]:
         # US stocks via Interactive Brokers (TWS/Gateway, local desktop only)
         "ibkr": {"USStock": {"spot"}},
         "alpaca": {"USStock": {"spot"}},
+        # MetaTrader 5 (Forex / CFDs, e.g. HFM). Both directions are supported;
+        # "spot" is the market_type Forex strategies carry, "swap" is accepted
+        # for CFD-style manifests.
+        "mt5": {"Forex": {"spot", "swap"}},
     }
     for ex, capability in CRYPTO_VENUE_CAPABILITIES.items():
         matrix[ex] = {"Crypto": set(capability.market_types)}
@@ -65,15 +69,15 @@ LONG_ONLY_BROKERS: Set[str] = {"ibkr", "alpaca"}
 BOT_TYPE_MARKETS: Dict[str, Set[str]] = {
     "grid":       {"Crypto"},
     "martingale": {"Crypto"},
-    "dca":        {"Crypto", "USStock"},
-    "trend":      {"Crypto", "USStock"},
+    "dca":        {"Crypto", "USStock", "Forex"},
+    "trend":      {"Crypto", "USStock", "Forex"},
 }
 
 
 # Markets we recognize as legal canonical values. Anything outside this set
 # is considered analysis/backtest-only (e.g. CNStock, HKStock, MOEX, Futures
 # generic) and may not be used for live strategies.
-LIVE_MARKET_CATEGORIES: Set[str] = {"Crypto", "USStock"}
+LIVE_MARKET_CATEGORIES: Set[str] = {"Crypto", "USStock", "Forex"}
 
 
 # ---------------------------------------------------------------------------

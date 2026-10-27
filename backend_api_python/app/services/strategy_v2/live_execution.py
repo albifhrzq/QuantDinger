@@ -40,6 +40,7 @@ class LiveOrderRequest:
     strategy_type: str = ""
     decision_context: dict[str, Any] | None = None
     runtime_fencing_token: int = 0
+    market_category: str = ""
 
 
 class StrategyV2OrderGateway:
@@ -404,7 +405,13 @@ class StrategyV2OrderGateway:
             raise ValueError("strategyV2.invalidOrderSize")
         if request.execution_mode not in {"signal", "live"}:
             raise ValueError("strategyV2.invalidExecutionMode")
-        if request.market_type == "spot" and "short" in request.action:
+        # Forex/CFD instruments are two-sided even though they carry the
+        # "spot" market_type; only crypto/stock spot is long-only.
+        if (
+            request.market_type == "spot"
+            and "short" in request.action
+            and request.market_category != "Forex"
+        ):
             raise ValueError("strategyV2.spotShortUnsupported")
         if request.order_type not in {"market", "limit"}:
             raise ValueError("strategyV2.orderTypeUnsupported")

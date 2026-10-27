@@ -308,7 +308,7 @@ class TradingExecutor:
             conflict = find_live_strategy_conflict(strategy, user_id)
             if conflict:
                 raise RuntimeError(live_conflict_message(conflict))
-            if exchange_id in {"alpaca", "ibkr"}:
+            if exchange_id in {"alpaca", "ibkr", "mt5"}:
                 from app.services.live_trading.factory import create_client
 
                 client = None
@@ -330,6 +330,11 @@ class TradingExecutor:
                         summary.get("account") or ""
                     ).strip():
                         raise RuntimeError("strategyV2.connectionFailed")
+                    if exchange_id == "mt5":
+                        if not str(summary.get("account") or "").strip() or not summary.get("trade_allowed", True):
+                            raise RuntimeError("strategyV2.connectionFailed")
+                        if summary.get("trade_mode") == "real" and not summary.get("real_allowed"):
+                            raise RuntimeError("strategyV2.mt5RealAccountBlocked")
                 except Exception as exc:
                     if str(exc) == "strategyV2.connectionFailed":
                         raise
@@ -605,6 +610,7 @@ class TradingExecutor:
                     reference_price=price,
                     signal_timestamp=signal_ts,
                     market_type=str(row.get("market_type") or strategy.get("market_type") or "swap"),
+                    market_category=str(strategy.get("market_category") or ""),
                     execution_mode="live",
                     leverage=leverage,
                     reason="user_stop_and_close",
@@ -692,6 +698,7 @@ class TradingExecutor:
                     reference_price=price,
                     signal_timestamp=signal_ts,
                     market_type=str(row.get("market_type") or strategy.get("market_type") or "spot"),
+                    market_category=str(strategy.get("market_category") or ""),
                     execution_mode="signal",
                     leverage=leverage,
                     reason="user_stop_and_close",
@@ -1708,7 +1715,11 @@ class TradingExecutor:
                 target_amount,
                 direction_mode=direction_mode,
             )
-        if market_type == "spot" and target_amount < -1e-12:
+        if (
+            market_type == "spot"
+            and target_amount < -1e-12
+            and str(member.get("market") or "") != "Forex"
+        ):
             raise RuntimeError("strategyV2.spotShortUnsupported")
 
         closes_position = abs(target_amount) <= 1e-12 and abs(current_amount) > 1e-12
@@ -1883,6 +1894,7 @@ class TradingExecutor:
             reference_price=reference_price,
             signal_timestamp=int(values.get("signal_ts") or time.time()),
             market_type=str(values.get("market_type") or "spot"),
+            market_category=str(values.get("market_category") or ""),
             execution_mode=str(values.get("execution_mode") or "signal"),
             leverage=leverage,
             margin_mode=str(

@@ -445,7 +445,9 @@ class StrategyV2DeploymentService:
             raise StrategyV2ContractError("strategyV2.cryptoCredentialRequired")
         if market == "USStock" and exchange_id not in {"alpaca", "ibkr"}:
             raise StrategyV2ContractError("strategyV2.stockCredentialRequired")
-        if market not in {"Crypto", "USStock"}:
+        if market == "Forex" and exchange_id != "mt5":
+            raise StrategyV2ContractError("strategyV2.forexCredentialRequired")
+        if market not in {"Crypto", "USStock", "Forex"}:
             raise StrategyV2ContractError("strategyV2.liveMarketUnsupported")
 
     @staticmethod

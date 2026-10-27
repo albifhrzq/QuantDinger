@@ -77,7 +77,8 @@ class TestHelpers:
     def test_allowed_bot_types_per_market(self):
         # Crypto: every bot type is supported.
         assert allowed_bot_types("Crypto") == {"grid", "martingale", "dca", "trend"}
-        assert allowed_bot_types("Forex") == set()
+        # Forex (MT5): trend/dca only; grid/martingale stay crypto-only.
+        assert allowed_bot_types("Forex") == {"dca", "trend"}
         # USStock: no grid (overnight gaps), no martingale.
         assert allowed_bot_types("USStock") == {"dca", "trend"}
 
@@ -86,7 +87,7 @@ class TestHelpers:
         assert "ibkr" in usstock_brokers
         assert "alpaca" in usstock_brokers
         assert "binance" not in usstock_brokers
-        assert list_supported_brokers_for_market("Forex") == set()
+        assert list_supported_brokers_for_market("Forex") == {"mt5"}
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ class TestValidateIllegalCombos:
             )
 
     def test_binance_cannot_trade_forex(self):
-        with pytest.raises(ValueError, match="not supported for live trading"):
+        with pytest.raises(ValueError, match="BINANCE cannot trade market_category='Forex'"):
             validate_strategy_config(
                 exchange_id="binance",
                 market_category="Forex",
@@ -292,8 +293,8 @@ class TestBotTypeRules:
                 bot_type="grid",
             )
 
-    def test_forex_live_trading_rejected(self):
-        with pytest.raises(ValueError, match="not supported for live trading"):
+    def test_forex_live_trading_requires_mt5(self):
+        with pytest.raises(ValueError, match="For Forex use one of: \\['mt5'\\]"):
             validate_strategy_config(
                 exchange_id="binance",
                 market_category="Forex",
@@ -352,7 +353,7 @@ class TestToDictSnapshot:
         assert sorted(bot_markets["martingale"]) == ["Crypto"]
 
     def test_live_market_categories_serialized(self):
-        assert sorted(to_dict()["live_market_categories"]) == ["Crypto", "USStock"]
+        assert sorted(to_dict()["live_market_categories"]) == ["Crypto", "Forex", "USStock"]
 
     def test_matrix_internal_consistency(self):
         # Every long-only broker must be present in BROKER_MARKETS.

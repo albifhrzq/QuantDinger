@@ -68,6 +68,22 @@ class CredentialCreateRequestSchema(Schema):
     ibkr_port = fields.Integer(load_default=7497, validate=validate.Range(min=1, max=65535))
     ibkr_client_id = fields.Integer(load_default=7, validate=validate.Range(min=0, max=2147483647))
     ibkr_account = fields.String(load_default="", validate=validate.Length(max=128))
+    mt5_host = fields.String(load_default="", validate=validate.Length(max=255))
+    mt5_port = fields.Integer(load_default=8001, validate=validate.Range(min=1, max=65535))
+    mt5_magic = fields.Integer(load_default=26102026, validate=validate.Range(min=1, max=2147483647))
+    mt5_symbol_suffix = fields.String(load_default="", validate=validate.Length(max=16))
+    mt5_symbol_map = fields.String(load_default="", validate=validate.Length(max=1024))
+    mt5_allowed_symbols = fields.String(load_default="", validate=validate.Length(max=512))
+    mt5_lot_mode = fields.String(load_default="fixed", validate=validate.OneOf(["fixed", "proportional"]))
+    mt5_fixed_lot = fields.Float(load_default=0.01, validate=validate.Range(min=0.0001, max=100))
+    mt5_max_lot = fields.Float(load_default=0.05, validate=validate.Range(min=0.0001, max=100))
+    mt5_max_positions = fields.Integer(load_default=2, validate=validate.Range(min=0, max=100))
+    mt5_max_daily_loss = fields.Float(load_default=10.0, validate=validate.Range(min=0, max=1e9))
+    mt5_require_sl = fields.Boolean(load_default=True)
+    mt5_default_sl_points = fields.Float(load_default=1500.0, validate=validate.Range(min=0, max=1e7))
+    mt5_default_tp_points = fields.Float(load_default=3000.0, validate=validate.Range(min=0, max=1e7))
+    mt5_max_slippage_points = fields.Integer(load_default=50, validate=validate.Range(min=0, max=100000))
+    mt5_allow_real = fields.Boolean(load_default=False)
 
     @pre_load
     def normalize_exchange(self, data, **kwargs):
@@ -77,7 +93,7 @@ class CredentialCreateRequestSchema(Schema):
 
     @validates_schema
     def validate_exchange_secret(self, data, **kwargs):
-        if str(data.get("exchange_id") or "").lower() == "ibkr":
+        if str(data.get("exchange_id") or "").lower() in ("ibkr", "mt5"):
             return
         if not (data.get("api_key") or data.get("apiKey")):
             raise ValidationError("api_key is required", field_name="api_key")

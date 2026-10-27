@@ -89,7 +89,7 @@ def list_credentials():
         items = []
         for row in rows:
             item = dict(row or {})
-            if str(item.get('exchange_id') or '').strip().lower() not in {*CRYPTO_EXCHANGES, 'ibkr', 'alpaca'}:
+            if str(item.get('exchange_id') or '').strip().lower() not in {*CRYPTO_EXCHANGES, 'ibkr', 'alpaca', 'mt5'}:
                 continue
             item['enable_demo_trading'] = False
             item['environment'] = 'live'
@@ -230,6 +230,10 @@ def test_credential(data):
             if hasattr(client, 'connect') and not client.connect():
                 raise ValueError('CREDENTIAL_CONNECTION_FAILED')
             return jsonify({'code': 1, 'msg': 'CREDENTIAL_CONNECTION_OK', 'data': {'environment': 'paper' if str(config['api_key']).upper().startswith('PK') else 'live'}})
+        if exchange_id == 'mt5':
+            from app.services.mt5_trading.credentials import mt5_config_from_request, probe_mt5
+
+            return jsonify({'code': 1, 'msg': 'CREDENTIAL_CONNECTION_OK', 'data': probe_mt5(mt5_config_from_request(data))})
         if exchange_id == 'ibkr':
             from app.utils.local_brokers import desktop_broker_cloud_reject_message, local_desktop_brokers_allowed
 
@@ -315,6 +319,18 @@ def create_credential(data):
                 'ibkr_account': (data.get('ibkr_account') or '').strip()
             })
             hint = f"{config['ibkr_host']}:{config['ibkr_port']}"
+        elif exchange_id == 'mt5':
+            # MetaTrader 5 terminal (Forex/CFD). Broker login lives in the
+            # terminal itself; only connection + risk settings are stored.
+            from app.services.mt5_trading.credentials import mt5_config_from_request, probe_mt5
+
+            try:
+                mt5_cfg = mt5_config_from_request(data)
+                info = probe_mt5(mt5_cfg)
+            except Exception as exc:
+                return jsonify({'code': 0, 'msg': str(exc), 'data': None}), 400
+            config = mt5_cfg.to_vault_dict()
+            hint = f"{info.get('login')}@{info.get('server')} ({info.get('trade_mode')})"
         elif exchange_id in CRYPTO_EXCHANGES:
             # Crypto exchanges
             try:

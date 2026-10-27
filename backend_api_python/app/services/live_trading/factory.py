@@ -221,6 +221,9 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
     if not isinstance(exchange_config, dict):
         raise LiveTradingError("Invalid exchange_config")
     exchange_id = _get(exchange_config, "exchange_id", "exchangeId").lower()
+    # MetaTrader 5 (Forex/CFD) uses a terminal connection, not API keys.
+    if exchange_id == "mt5":
+        return create_mt5_client(exchange_config)
     api_key = _get(exchange_config, "api_key", "apiKey")
     secret_key = _get(exchange_config, "secret_key", "secret")
     passphrase = _get(exchange_config, "passphrase", "password")
@@ -356,6 +359,21 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         return create_alpaca_client({**exchange_config, "paper": is_demo})
 
     raise LiveTradingError(f"Unsupported exchange_id: {exchange_id}")
+
+
+def create_mt5_client(exchange_config: Dict[str, Any]):
+    """Create a MetaTrader 5 client (Forex/CFD brokers such as HFM).
+
+    The terminal host must be in MT5_ALLOWED_HOSTS (default: ``mt5``) because
+    the transport is an rpyc classic connection to the terminal host.
+    """
+    from app.services.mt5_trading import create_mt5_client as _create
+
+    host = str(exchange_config.get("mt5_host") or exchange_config.get("host") or os.getenv("MT5_DEFAULT_HOST", "mt5")).strip()
+    allowed = {h.strip().lower() for h in os.getenv("MT5_ALLOWED_HOSTS", "mt5").split(",") if h.strip()}
+    if host.lower() not in allowed:
+        raise LiveTradingError(f"MT5_HOST_NOT_ALLOWED:{host}")
+    return _create({**exchange_config, "mt5_host": host})
 
 
 def create_ibkr_client(exchange_config: Dict[str, Any]):

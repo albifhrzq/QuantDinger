@@ -1822,6 +1822,28 @@ class PendingOrderWorker(
             )
             return
 
+        if str(exchange_id or "").strip().lower() == "mt5":
+            broker_client_oid = make_client_order_id(
+                exchange_id="mt5", strategy_id=strategy_id, order_id=order_id,
+            )
+            self._execute_mt5_order(
+                order_id=order_id,
+                order_row=order_row,
+                payload=payload,
+                client=client,
+                strategy_id=strategy_id,
+                exchange_config=exchange_config,
+                market_type=market_type,
+                client_order_id=broker_client_oid,
+                prepare_submission=self._broker_submission_preparer(
+                    order_id=order_id, exchange_id="mt5", market_type=market_type,
+                    client_order_id=broker_client_oid,
+                ),
+                _notify_live_best_effort=_notify_live_best_effort,
+                _console_print=_console_print,
+            )
+            return
+
         sig = str(signal_type or "").strip().lower()
         # Spot does not support short signals in this system.
         if market_type == "spot" and "short" in sig:
@@ -2693,6 +2715,160 @@ class PendingOrderWorker(
             append_strategy_log(strategy_id, "error", f"IBKR order exception ({symbol} {signal_type}): {e}")
             if is_fatal_exchange_error(str(e)):
                 auto_stop_live_strategy(int(strategy_id), str(e), source="ibkr_order")
+
+    def _execute_mt5_order(
+        self,
+        *,
+        order_id: int,
+        order_row: Dict[str, Any],
+        payload: Dict[str, Any],
+        client,  # MT5Client instance
+        strategy_id: int,
+        exchange_config: Dict[str, Any],
+        market_type: str,
+        client_order_id: str = "",
+        prepare_submission=None,
+        _notify_live_best_effort,
+        _console_print,
+    ) -> None:
+        """Execute an order on a MetaTrader 5 terminal (Forex/CFD).
+
+        Entries are sized and guarded by the MT5 credential (fixed lot, max lot,
+        mandatory SL, max positions, daily loss cap, demo-only unless real
+        accounts are explicitly enabled). Exits close positions owned by the
+        credential's magic number, oldest first.
+        """
+        signal_type = payload.get("signal_type") or order_row.get("signal_type")
+        symbol = payload.get("symbol") or order_row.get("symbol")
+        amount = float(payload.get("amount") or order_row.get("amount") or 0.0)
+        ref_price = float(payload.get("ref_price") or payload.get("price") or order_row.get("price") or 0.0)
+        sig = str(signal_type or "").strip().lower()
+
+        entry_side = {"open_long": "buy", "add_long": "buy", "open_short": "sell", "add_short": "sell"}.get(sig)
+        exit_side = None
+        if sig.startswith(("close_long", "reduce_long")):
+            exit_side = "long"
+        elif sig.startswith(("close_short", "reduce_short")):
+            exit_side = "short"
+        if not entry_side and not exit_side:
+            self._mark_failed(order_id=order_id, error=f"mt5_unsupported_signal:{signal_type}")
+            _notify_live_best_effort(status="failed", error=f"mt5_unsupported_signal:{signal_type}")
+            return
+
+        submission_accepted = False
+        try:
+            if callable(prepare_submission):
+                prepare_submission()
+            if entry_side:
+                stop_price, take_price = _broker_protection_prices(
+                    payload,
+                    signal_type=str(signal_type or ""),
+                    entry_price=ref_price,
+                )
+                result = client.place_market_order(
+                    symbol=symbol,
+                    side=entry_side,
+                    quantity=amount,
+                    market_type="Forex",
+                    client_order_id=client_order_id,
+                    stop_loss_price=float(stop_price or 0.0),
+                    take_profit_price=float(take_price or 0.0),
+                )
+            else:
+                full_close = sig.startswith("close_")
+                result = client.close_positions(
+                    symbol=symbol,
+                    side=exit_side,
+                    quantity=0.0 if full_close else amount,
+                    client_order_id=client_order_id,
+                )
+
+            raw = result.raw or {}
+            if not result.success:
+                if raw.get("transport_error"):
+                    # Transport failure before/while sending: outcome is unknown.
+                    self._mark_submit_unknown(order_id=order_id, error=f"mt5_submit_unknown:{result.message}")
+                    append_strategy_log(strategy_id, "warning",
+                                        f"MT5 submission outcome unknown ({symbol} {signal_type}): {result.message}")
+                    _notify_live_best_effort(status="failed", error=f"mt5_submit_unknown:{result.message}")
+                    return
+                self._mark_failed(order_id=order_id, error=f"mt5_order_failed:{result.message}")
+                _console_print(f"[worker] MT5 order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
+                _notify_live_best_effort(status="failed", error=f"mt5_order_failed:{result.message}")
+                append_strategy_log(strategy_id, "error", f"MT5 order rejected ({symbol} {signal_type}): {result.message}")
+                if "real_account_blocked" in str(result.message):
+                    auto_stop_live_strategy(int(strategy_id), str(result.message), source="mt5_order")
+                return
+            submission_accepted = True
+
+            filled = float(result.filled or 0.0)
+            avg_price = float(result.avg_price or 0.0)
+            exchange_order_id = str(result.order_id or "")
+            executed_at = int(time.time())
+            self._mark_sent(
+                order_id=order_id,
+                note="mt5_order_sent",
+                exchange_id="mt5",
+                exchange_order_id=exchange_order_id,
+                exchange_response_json=json.dumps(raw, ensure_ascii=False, default=str),
+                filled=filled,
+                avg_price=avg_price,
+                executed_at=executed_at if filled > 0 else None,
+                final_filled=filled > 0,
+                client_order_id=client_order_id,
+            )
+            _console_print(
+                f"[worker] MT5 order sent: strategy_id={strategy_id} pending_id={order_id} "
+                f"order={exchange_order_id} lots={raw.get('lots')} filled={filled} avg={avg_price}"
+            )
+            try:
+                if filled > 0 and avg_price > 0:
+                    profit, _matched = persist_strategy_fill(
+                        strategy_id=int(strategy_id),
+                        symbol=str(symbol),
+                        signal_type=str(signal_type),
+                        cumulative_filled=float(filled), filled=float(filled),
+                        avg_price=float(avg_price),
+                        exchange_config=exchange_config,
+                        market_type=str(market_type or "spot"),
+                        order_id=int(order_id),
+                        fill_source="worker_mt5",
+                        commission=0.0,
+                        commission_ccy="",
+                        commission_quote=0.0,
+                        close_reason=trade_close_reason_from_payload(payload, str(signal_type)),
+                        strategy_run_id=int(payload.get("strategy_run_id") or order_row.get("strategy_run_id") or 0),
+                        order_intent_id=int(payload.get("order_intent_id") or order_row.get("order_intent_id") or 0),
+                        exchange_id="mt5",
+                        exchange_order_id=exchange_order_id,
+                        fee_status="pending",
+                        fee_source="",
+                        raw_fill=raw,
+                    )
+                    _pstr = f", profit={profit:.4f}" if profit is not None else ""
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Trade executed: {signal_type} {symbol} lots={raw.get('lots')} "
+                        f"@ {avg_price:.5f}{_pstr} (exchange=mt5)",
+                    )
+            except Exception as e:
+                logger.warning(f"MT5 record_trade/update_position failed: pending_id={order_id}, err={e}")
+
+            _notify_live_best_effort(
+                status="sent",
+                exchange_id="mt5",
+                exchange_order_id=exchange_order_id,
+                price_hint=avg_price,
+                amount_hint=filled,
+            )
+        except Exception as e:
+            logger.error(f"MT5 order execution failed: pending_id={order_id}, strategy_id={strategy_id}, err={e}")
+            if submission_accepted or self._is_ambiguous_submit_error(e):
+                self._mark_submit_unknown(order_id=order_id, error=f"mt5_submit_unknown:{e}")
+            else:
+                self._mark_failed(order_id=order_id, error=f"mt5_exception:{e}")
+            _notify_live_best_effort(status="failed", error=str(e))
+            append_strategy_log(strategy_id, "error", f"MT5 order exception ({symbol} {signal_type}): {e}")
 
     def _execute_alpaca_order(self, **kwargs) -> None:
         from app.services.live_trading.alpaca_ownership import execute_guarded_alpaca_order

@@ -903,6 +903,39 @@ class PendingOrderPositionSyncMixin:
                                 except Exception:
                                     pass
 
+                    elif str(getattr(client, "exchange_id", "") or "") == "mt5":
+                        # MetaTrader 5 positions owned by this credential's magic
+                        # number, already in QuantDinger units (lots * contract size).
+                        try:
+                            positions = client.get_positions(raise_on_error=True) or []
+                        except Exception as e:
+                            if is_file_descriptor_exhausted(e):
+                                set_exchange_sync_backoff(cache_key, seconds=_position_sync_fd_backoff_sec())
+                                _activate_position_sync_fd_backoff(str(e))
+                                return
+                            logger.error(f"[PositionSync] Strategy {sid} MT5 get_positions failed: {e}")
+                            set_exchange_sync_backoff(cache_key, seconds=60)
+                            continue
+                        for p in positions:
+                            if not isinstance(p, dict):
+                                continue
+                            sym = str(p.get("symbol") or "").strip()
+                            side_str = str(p.get("side") or "").strip().lower()
+                            try:
+                                qty = abs(float(p.get("size") or 0.0))
+                                avg = float(p.get("avgCost") or 0.0)
+                            except Exception:
+                                qty, avg = 0.0, 0.0
+                            if not sym or side_str not in ("long", "short") or qty <= 0:
+                                continue
+                            bucket = exch_size.setdefault(sym, {"long": 0.0, "short": 0.0})
+                            prev = bucket[side_str]
+                            bucket[side_str] = prev + qty
+                            if avg > 0:
+                                prices = exch_entry_price.setdefault(sym, {"long": 0.0, "short": 0.0})
+                                prices[side_str] = (prices[side_str] * prev + avg * qty) / (prev + qty)
+                        # Continue to reconciliation logic below
+
                     elif IBKRClient is not None and isinstance(client, IBKRClient):
                         # IBKR US-stock positions. `quantity` is signed: >0 = long, <0 = short.
                         # Mirror both sides because IBKR stock positions are signed.
