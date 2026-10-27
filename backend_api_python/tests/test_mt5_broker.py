@@ -156,6 +156,19 @@ def test_close_positions_full_and_partial():
     assert "no_matching_position" in c.close_positions("XAUUSD", "short").message
 
 
+def test_vault_dict_marks_demo_environment():
+    from app.services.live_trading.factory import exchange_trading_environment
+
+    assert exchange_trading_environment(MT5Config().to_vault_dict(), "mt5") == "demo"
+    assert exchange_trading_environment(MT5Config(allow_real=True).to_vault_dict(), "mt5") == "live"
+
+
+def test_position_sync_symbol_is_canonical():
+    from app.services.live_trading.records import normalize_strategy_symbol
+
+    assert normalize_strategy_symbol("XAUUSD") == "XAU/USD"
+
+
 def test_factory_routes_mt5_and_enforces_host_allowlist(monkeypatch):
     from app.services.live_trading.base import LiveTradingError
     from app.services.live_trading.factory import create_client

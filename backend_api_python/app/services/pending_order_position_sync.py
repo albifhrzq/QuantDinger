@@ -919,7 +919,8 @@ class PendingOrderPositionSyncMixin:
                         for p in positions:
                             if not isinstance(p, dict):
                                 continue
-                            sym = str(p.get("symbol") or "").strip()
+                            # Strategy ledger stores canonical pairs (XAU/USD); MT5 reports XAUUSD.
+                            sym = normalize_strategy_symbol(str(p.get("symbol") or "")) or str(p.get("symbol") or "").strip()
                             side_str = str(p.get("side") or "").strip().lower()
                             try:
                                 qty = abs(float(p.get("size") or 0.0))

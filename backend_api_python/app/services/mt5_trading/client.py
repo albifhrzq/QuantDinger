@@ -202,6 +202,8 @@ class MT5Config:
     def to_vault_dict(self) -> Dict[str, Any]:
         return {
             "exchange_id": "mt5",
+            # Credential list badge; the live account mode is re-checked on every order.
+            "environment": "live" if self.allow_real else "demo",
             "mt5_host": self.host,
             "mt5_port": self.port,
             "mt5_magic": self.magic,

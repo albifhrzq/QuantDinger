@@ -150,6 +150,7 @@ def validate_exchange_environment(exchange_id: str, environment: str, market_sco
         "gate": {"live", "testnet"},
         "htx": {"live"},
         "alpaca": {"live", "demo"},
+        "mt5": {"live", "demo"},
     }
     if env not in allowed.get(ex, {"live"}):
         if ex == "htx" and env != "live":
